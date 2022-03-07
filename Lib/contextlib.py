@@ -6,16 +6,16 @@ import _collections_abc
 from collections import deque
 from functools import wraps
 from types import MethodType, GenericAlias
+import signal
 
 __all__ = ["asynccontextmanager", "contextmanager", "closing", "nullcontext",
            "AbstractContextManager", "AbstractAsyncContextManager",
            "AsyncExitStack", "ContextDecorator", "ExitStack",
            "redirect_stdout", "redirect_stderr", "suppress", "aclosing",
-           "chdir"]
+           "chdir", "Timeout"]
 
 
 class AbstractContextManager(abc.ABC):
-
     """An abstract base class for context managers."""
 
     __class_getitem__ = classmethod(GenericAlias)
@@ -37,7 +37,6 @@ class AbstractContextManager(abc.ABC):
 
 
 class AbstractAsyncContextManager(abc.ABC):
-
     """An abstract base class for asynchronous context managers."""
 
     __class_getitem__ = classmethod(GenericAlias)
@@ -79,6 +78,7 @@ class ContextDecorator(object):
         def inner(*args, **kwds):
             with self._recreate_cm():
                 return func(*args, **kwds)
+
         return inner
 
 
@@ -95,6 +95,7 @@ class AsyncContextDecorator(object):
         async def inner(*args, **kwds):
             async with self._recreate_cm():
                 return await func(*args, **kwds)
+
         return inner
 
 
@@ -185,6 +186,7 @@ class _GeneratorContextManager(
                     raise
                 return False
             raise RuntimeError("generator didn't stop after throw()")
+
 
 class _AsyncGeneratorContextManager(
     _GeneratorContextManagerBase,
@@ -286,9 +288,11 @@ def contextmanager(func):
         finally:
             <cleanup>
     """
+
     @wraps(func)
     def helper(*args, **kwds):
         return _GeneratorContextManager(func, args, kwds)
+
     return helper
 
 
@@ -319,9 +323,11 @@ def asynccontextmanager(func):
         finally:
             <cleanup>
     """
+
     @wraps(func)
     def helper(*args, **kwds):
         return _AsyncGeneratorContextManager(func, args, kwds)
+
     return helper
 
 
@@ -342,10 +348,13 @@ class closing(AbstractContextManager):
             f.close()
 
     """
+
     def __init__(self, thing):
         self.thing = thing
+
     def __enter__(self):
         return self.thing
+
     def __exit__(self, *exc_info):
         self.thing.close()
 
@@ -368,16 +377,18 @@ class aclosing(AbstractAsyncContextManager):
             await agen.aclose()
 
     """
+
     def __init__(self, thing):
         self.thing = thing
+
     async def __aenter__(self):
         return self.thing
+
     async def __aexit__(self, *exc_info):
         await self.thing.aclose()
 
 
 class _RedirectStream(AbstractContextManager):
-
     _stream = None
 
     def __init__(self, new_target):
@@ -457,6 +468,7 @@ class _BaseExitStack:
     def _create_cb_wrapper(callback, /, *args, **kwds):
         def _exit_wrapper(exc_type, exc, tb):
             callback(*args, **kwds)
+
         return _exit_wrapper
 
     def __init__(self):
@@ -551,6 +563,7 @@ class ExitStack(_BaseExitStack, AbstractContextManager):
         # We manipulate the exception state so it behaves as though
         # we were actually nesting multiple with statements
         frame_exc = sys.exc_info()[1]
+
         def _fix_exception_context(new_exc, old_exc):
             # Context may not be correct, so find the end of the chain
             while 1:
@@ -621,6 +634,7 @@ class AsyncExitStack(_BaseExitStack, AbstractAsyncContextManager):
     def _create_async_cb_wrapper(callback, /, *args, **kwds):
         async def _exit_wrapper(exc_type, exc, tb):
             await callback(*args, **kwds)
+
         return _exit_wrapper
 
     async def enter_async_context(self, cm):
@@ -636,7 +650,7 @@ class AsyncExitStack(_BaseExitStack, AbstractAsyncContextManager):
         except AttributeError:
             raise TypeError(f"'{cls.__module__}.{cls.__qualname__}' object does "
                             f"not support the asynchronous context manager protocol"
-                           ) from None
+                            ) from None
         result = await _enter(cm)
         self._push_async_cm_exit(cm, _exit)
         return result
@@ -691,6 +705,7 @@ class AsyncExitStack(_BaseExitStack, AbstractAsyncContextManager):
         # We manipulate the exception state so it behaves as though
         # we were actually nesting multiple with statements
         frame_exc = sys.exc_info()[1]
+
         def _fix_exception_context(new_exc, old_exc):
             # Context may not be correct, so find the end of the chain
             while 1:
@@ -779,3 +794,37 @@ class chdir(AbstractContextManager):
 
     def __exit__(self, *excinfo):
         os.chdir(self._old_cwd.pop())
+
+
+class Timeout:
+    """Context manager to execute context in specific time
+
+    After specified duration if execution doesn't exit normally TimeoutError
+    exception prevent context execution. Execution proceeds with the next
+    statement following the with statement.
+
+    try:
+         with Timeout(1):
+             time.sleep(2)
+
+        # Execution proceed normally if it's done at the specified time.
+
+    except TimeoutError:
+        # Execution stops here and TimeoutError raise here/
+        pass
+
+    """
+
+    def __init__(self, seconds=1, error_message='Timeout'):
+        self.seconds = seconds
+        self.error_message = error_message
+
+    def handle_timeout(self, signum, frame):
+        raise TimeoutError(self.error_message)
+
+    def __enter__(self):
+        signal.signal(signal.SIGALRM, self.handle_timeout)
+        signal.alarm(self.seconds)
+
+    def __exit__(self, type, value, traceback):
+        signal.alarm(0)
