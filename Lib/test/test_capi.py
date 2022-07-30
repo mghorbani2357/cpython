@@ -70,16 +70,17 @@ class CAPITest(unittest.TestCase):
                                   'import _testcapi;'
                                   '_testcapi.crash_no_current_thread()'],
                                  stdout=subprocess.PIPE,
-                                 stderr=subprocess.PIPE)
+                                 stderr=subprocess.PIPE,
+                                 text=True)
         (out, err) = p.communicate()
-        self.assertEqual(out, b'')
+        self.assertEqual(out, '')
         # This used to cause an infinite loop.
-        self.assertTrue(err.rstrip().startswith(
-                         b'Fatal Python error: '
-                         b'PyThreadState_Get: '
-                         b'the function must be called with the GIL held, '
-                         b'but the GIL is released '
-                         b'(the current Python thread state is NULL)'),
+        msg = ("Fatal Python error: PyThreadState_Get: "
+               "the function must be called with the GIL held, "
+               "after Python initialization and before Python finalization, "
+               "but the GIL is released "
+               "(the current Python thread state is NULL)")
+        self.assertTrue(err.rstrip().startswith(msg),
                         err)
 
     def test_memoryview_from_NULL_pointer(self):
@@ -618,6 +619,12 @@ class CAPITest(unittest.TestCase):
         with self.assertRaisesRegex(TypeError, msg):
             t = _testcapi.pytype_fromspec_meta(_testcapi.HeapCTypeMetaclassCustomNew)
 
+    def test_pytype_fromspec_with_repeated_slots(self):
+        for variant in range(2):
+            with self.subTest(variant=variant):
+                with self.assertRaises(SystemError):
+                    _testcapi.create_type_from_repeated_slots(variant)
+
     def test_pynumber_tobase(self):
         from _testcapi import pynumber_tobase
         self.assertEqual(pynumber_tobase(123, 2), '0b1111011')
@@ -714,6 +721,20 @@ class CAPITest(unittest.TestCase):
         for name in names:
             with self.subTest(name=name):
                 self.assertTrue(hasattr(ctypes.pythonapi, name))
+
+    def test_clear_managed_dict(self):
+
+        class C:
+            def __init__(self):
+                self.a = 1
+
+        c = C()
+        _testcapi.clear_managed_dict(c)
+        self.assertEqual(c.__dict__, {})
+        c = C()
+        self.assertEqual(c.__dict__, {'a':1})
+        _testcapi.clear_managed_dict(c)
+        self.assertEqual(c.__dict__, {})
 
 
 class TestPendingCalls(unittest.TestCase):
