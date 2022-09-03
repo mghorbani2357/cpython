@@ -45,6 +45,7 @@ struct type_cache {
 
 typedef struct {
     PyTypeObject *type;
+    PyObject *tp_subclasses;
     /* We never clean up weakrefs for static builtin types since
        they will effectively never get triggered.  However, there
        are also some diagnostic uses for the list of weakrefs,
@@ -73,6 +74,9 @@ extern static_builtin_state * _PyStaticType_GetState(PyTypeObject *);
 extern void _PyStaticType_ClearWeakRefs(PyTypeObject *type);
 extern void _PyStaticType_Dealloc(PyTypeObject *type);
 
+
+PyObject *_Py_slot_tp_getattro(PyObject *self, PyObject *name);
+PyObject *_Py_slot_tp_getattr_hook(PyObject *self, PyObject *name);
 
 #ifdef __cplusplus
 }
